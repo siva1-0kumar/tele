@@ -6,15 +6,15 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const ELEVENLABS_AGENT_ID = process.env.ELEVENLABS_AGENT_ID;
+const PORT = process.env.PORT || 3000;
 
 const fastify = Fastify();
 fastify.register(fastifyWebsocket);
 
-// μ-law to PCM 16-bit conversion
+// μ-law to PCM 16-bit
 function ulawToPcm16(buffer) {
   const MULAW_BIAS = 33;
   const pcmSamples = new Int16Array(buffer.length);
-
   for (let i = 0; i < buffer.length; i++) {
     let muLawByte = buffer[i] ^ 0xff;
     let sign = muLawByte & 0x80;
@@ -24,20 +24,19 @@ function ulawToPcm16(buffer) {
     sample = sign ? (MULAW_BIAS - sample) : (sample - MULAW_BIAS);
     pcmSamples[i] = sample;
   }
-
   return Buffer.from(pcmSamples.buffer);
 }
 
-// PCM 16-bit to μ-law conversion
+// PCM 16-bit to μ-law
 function pcm16ToUlaw(buffer) {
   const pcmSamples = new Int16Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 2);
-  const MULAW_MAX = 0x1fff;
   const MULAW_BIAS = 33;
+  const MULAW_MAX = 0x1fff;
   const ulawBuffer = Buffer.alloc(pcmSamples.length);
 
   for (let i = 0; i < pcmSamples.length; i++) {
     let sample = pcmSamples[i];
-    let sign = (sample < 0) ? 0x80 : 0;
+    let sign = sample < 0 ? 0x80 : 0;
     if (sign) sample = -sample;
     sample += MULAW_BIAS;
     if (sample > MULAW_MAX) sample = MULAW_MAX;
@@ -51,12 +50,12 @@ function pcm16ToUlaw(buffer) {
     let ulawByte = ~(sign | (exponent << 4) | mantissa);
     ulawBuffer[i] = ulawByte;
   }
-
   return ulawBuffer;
 }
 
-fastify.get("/ws", { websocket: true }, (connection, req) => {
-  const telecmiSocket = connection.socket;
+// WebSocket bridge
+fastify.get("/ws", { websocket: true }, (conn, req) => {
+  const telecmiSocket = conn.socket;
   console.log("✅ TeleCMI connected");
 
   const elevenLabsSocket = new WebSocket(
@@ -65,71 +64,54 @@ fastify.get("/ws", { websocket: true }, (connection, req) => {
 
   elevenLabsSocket.on("open", () => {
     console.log("🟢 Connected to ElevenLabs");
-    elevenLabsSocket.send(
-      JSON.stringify({ type: "conversation_initiation_client_data" })
-    );
+    elevenLabsSocket.send(JSON.stringify({ type: "conversation_initiation_client_data" }));
   });
 
   elevenLabsSocket.on("message", (data) => {
     try {
       const msg = JSON.parse(data);
       if (msg.type === "ping") {
-        elevenLabsSocket.send(JSON.stringify({
-          type: "pong",
-          event_id: msg.event_id
-        }));
+        elevenLabsSocket.send(JSON.stringify({ type: "pong", event_id: msg.event_id }));
       } else if (msg.audio) {
         const audioBuffer = Buffer.from(msg.audio, "base64");
         const ulawBuffer = pcm16ToUlaw(audioBuffer);
         telecmiSocket.send(ulawBuffer);
       } else {
-        console.log("🧠", msg);
+        console.log("🧠 ElevenLabs:", msg);
       }
     } catch (err) {
-      console.error("Invalid ElevenLabs message", err);
+      console.error("⚠️ ElevenLabs message error", err);
     }
   });
 
   telecmiSocket.on("message", (data) => {
     try {
-      const pcm16Buffer = ulawToPcm16(data);
-      const base64 = pcm16Buffer.toString("base64");
-      elevenLabsSocket.send(JSON.stringify({
-        user_audio_chunk: base64
-      }));
+      const pcmBuffer = ulawToPcm16(data);
+      const base64 = pcmBuffer.toString("base64");
+      elevenLabsSocket.send(JSON.stringify({ user_audio_chunk: base64 }));
     } catch (err) {
-      console.error("❌ Audio conversion error", err);
+      console.error("❌ TeleCMI audio error", err);
     }
   });
 
   telecmiSocket.on("close", () => {
     console.log("❎ TeleCMI disconnected");
-    if (elevenLabsSocket.readyState === WebSocket.OPEN) {
-      elevenLabsSocket.close();
-    }
+    if (elevenLabsSocket.readyState <= 1) elevenLabsSocket.close();
   });
 
   elevenLabsSocket.on("close", () => {
     console.log("❎ ElevenLabs disconnected");
-    if (telecmiSocket.readyState === WebSocket.OPEN && typeof telecmiSocket.close === 'function') {
-      telecmiSocket.close();
+    if (telecmiSocket.readyState <= 1) {
+      try {
+        telecmiSocket.close();
+      } catch (err) {
+        console.warn("⚠️ TeleCMI close failed:", err.message);
+      }
     }
   });
-
-  elevenLabsSocket.on("error", (err) => {
-    console.error("❌ ElevenLabs error:", err);
-  });
-
-  telecmiSocket.on("error", (err) => {
-    console.error("❌ TeleCMI socket error:", err);
-  });
 });
 
-fastify.listen({ port: 3000 }, () => {
-  console.log("🚀 WebSocket Proxy Server running on ws://localhost:3000/ws");
+// ✅ Fix: use 0.0.0.0 and process.env.PORT for Render
+fastify.listen({ port: PORT, host: "0.0.0.0" }, () => {
+  console.log(`🚀 WebSocket Proxy Server running on ws://0.0.0.0:${PORT}/ws`);
 });
-
-// websocket_client.js started
-console.log("🟢 Connected to server");
-console.log("Received from server: Echo: Hello from client!");
-// 🔴 Disconnected from server
