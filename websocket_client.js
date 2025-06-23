@@ -1,50 +1,38 @@
 // websocket_client.js
-import WebSocket from 'ws';
-import fs from 'fs';
+import WebSocket from "ws";
 
-console.log("websocket_client.js started");
+// Replace with your deployed WebSocket server URL
+const WS_URL = "wss://tele-1-rds5.onrender.com/ws";
 
-const socket = new WebSocket('ws://localhost:3000/ws');
+// Connect to the WebSocket proxy server
+const ws = new WebSocket(WS_URL);
 
-// Simulate μ-law audio data (replace with real mic stream for production)
-const FAKE_AUDIO_PATH = './test_ulaw_audio.ulaw'; // should be 8kHz, 8-bit μ-law encoded audio
-let audioChunks = [];
+ws.on("open", () => {
+  console.log("✅ Connected to WebSocket server:", WS_URL);
 
-try {
-  const audioData = fs.readFileSync(FAKE_AUDIO_PATH);
-  const chunkSize = 320; // 20ms for 8kHz µ-law (8-bit) = 160 bytes; using 320 = 40ms
-  for (let i = 0; i < audioData.length; i += chunkSize) {
-    audioChunks.push(audioData.slice(i, i + chunkSize));
-  }
-} catch (err) {
-  console.error("⚠️ Couldn't load test audio file:", err.message);
-}
-
-socket.on('open', () => {
-  console.log("🔌 Connected to ws://localhost:3000/ws");
-
-  let index = 0;
+  // Simulate sending μ-law audio (fake silence bytes for test)
   const interval = setInterval(() => {
-    if (index >= audioChunks.length) {
-      clearInterval(interval);
-      console.log("✅ Finished sending test audio");
-      return;
-    }
+    const silentULawFrame = Buffer.alloc(320, 0xff); // 320 bytes of μ-law silence
+    ws.send(silentULawFrame);
+    console.log("📤 Sent fake μ-law audio frame");
+  }, 100);
 
-    const chunk = audioChunks[index];
-    socket.send(chunk);
-    index++;
-  }, 500); // every 500ms
+  // Stop after 10 seconds
+  setTimeout(() => {
+    clearInterval(interval);
+    ws.close();
+    console.log("🛑 Closed test client after 10s");
+  }, 10000);
 });
 
-socket.on('message', (data) => {
-  console.log(`📥 Received audio from server: ${data.length} bytes`);
+ws.on("message", (data) => {
+  console.log("📥 Received audio from ElevenLabs (μ-law):", data.length, "bytes");
 });
 
-socket.on('close', () => {
-  console.log("❎ Connection closed");
+ws.on("close", () => {
+  console.log("❎ WebSocket connection closed");
 });
 
-socket.on('error', (err) => {
+ws.on("error", (err) => {
   console.error("💥 WebSocket error:", err.message);
 });
