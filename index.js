@@ -6,8 +6,6 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const ELEVENLABS_AGENT_ID = process.env.ELEVENLABS_AGENT_ID;
-const PORT = process.env.PORT || 3000;
-
 const fastify = Fastify();
 fastify.register(fastifyWebsocket);
 
@@ -15,6 +13,7 @@ fastify.register(fastifyWebsocket);
 function ulawToPcm16(buffer) {
   const MULAW_BIAS = 33;
   const pcmSamples = new Int16Array(buffer.length);
+
   for (let i = 0; i < buffer.length; i++) {
     let muLawByte = buffer[i] ^ 0xff;
     let sign = muLawByte & 0x80;
@@ -53,14 +52,11 @@ function pcm16ToUlaw(buffer) {
   return ulawBuffer;
 }
 
-// WebSocket bridge
 fastify.get("/ws", { websocket: true }, (conn, req) => {
   const telecmiSocket = conn.socket;
   console.log("✅ TeleCMI connected");
 
-  const elevenLabsSocket = new WebSocket(
-    `wss://api.elevenlabs.io/v1/convai/conversation?agent_id=${ELEVENLABS_AGENT_ID}`
-  );
+  const elevenLabsSocket = new WebSocket(`wss://api.elevenlabs.io/v1/convai/conversation?agent_id=${ELEVENLABS_AGENT_ID}`);
 
   elevenLabsSocket.on("open", () => {
     console.log("🟢 Connected to ElevenLabs");
@@ -74,8 +70,12 @@ fastify.get("/ws", { websocket: true }, (conn, req) => {
         elevenLabsSocket.send(JSON.stringify({ type: "pong", event_id: msg.event_id }));
       } else if (msg.audio) {
         const audioBuffer = Buffer.from(msg.audio, "base64");
+        console.log("📥 ElevenLabs audio received:", audioBuffer.length, "bytes");
+
         const ulawBuffer = pcm16ToUlaw(audioBuffer);
-        telecmiSocket.send(ulawBuffer);
+        if (telecmiSocket.readyState === WebSocket.OPEN) {
+          telecmiSocket.send(ulawBuffer);
+        }
       } else {
         console.log("🧠 ElevenLabs:", msg);
       }
@@ -86,8 +86,11 @@ fastify.get("/ws", { websocket: true }, (conn, req) => {
 
   telecmiSocket.on("message", (data) => {
     try {
+      console.log("📤 TeleCMI audio received:", data.length, "bytes");
+
       const pcmBuffer = ulawToPcm16(data);
       const base64 = pcmBuffer.toString("base64");
+
       elevenLabsSocket.send(JSON.stringify({ user_audio_chunk: base64 }));
     } catch (err) {
       console.error("❌ TeleCMI audio error", err);
@@ -96,7 +99,9 @@ fastify.get("/ws", { websocket: true }, (conn, req) => {
 
   telecmiSocket.on("close", () => {
     console.log("❎ TeleCMI disconnected");
-    if (elevenLabsSocket.readyState <= 1) elevenLabsSocket.close();
+    if (elevenLabsSocket.readyState <= 1) {
+      elevenLabsSocket.close();
+    }
   });
 
   elevenLabsSocket.on("close", () => {
@@ -109,9 +114,16 @@ fastify.get("/ws", { websocket: true }, (conn, req) => {
       }
     }
   });
+
+  elevenLabsSocket.on("error", (err) => {
+    console.error("💥 ElevenLabs socket error", err.message);
+  });
+
+  telecmiSocket.on("error", (err) => {
+    console.error("💥 TeleCMI socket error", err.message);
+  });
 });
 
-// ✅ Fix: use 0.0.0.0 and process.env.PORT for Render
-fastify.listen({ port: PORT, host: "0.0.0.0" }, () => {
-  console.log(`🚀 WebSocket Proxy Server running on ws://0.0.0.0:${PORT}/ws`);
+fastify.listen({ port: 3000 }, () => {
+  console.log("🚀 WebSocket Proxy Server running at: wss://tele-1-rds5.onrender.com/ws");
 });
