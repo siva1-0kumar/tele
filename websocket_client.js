@@ -1,38 +1,38 @@
-// websocket_client.js
-import WebSocket from "ws";
+import WebSocket from 'ws';
+import fs from 'fs';
+import path from 'path';
 
-// Replace with your deployed WebSocket server URL
-const WS_URL = "wss://tele-1-rds5.onrender.com/ws";
+// Replace this with your local or deployed WebSocket URL
+const SERVER_URL = 'wss://hdyudgdfhej-1.onrender.com/ws';
 
-// Connect to the WebSocket proxy server
-const ws = new WebSocket(WS_URL);
+const ws = new WebSocket(SERVER_URL);
 
-ws.on("open", () => {
-  console.log("✅ Connected to WebSocket server:", WS_URL);
+ws.on('open', () => {
+  console.log('🟢 Connected to WebSocket server');
 
-  // Simulate sending μ-law audio (fake silence bytes for test)
-  const interval = setInterval(() => {
-    const silentULawFrame = Buffer.alloc(320, 0xff); // 320 bytes of μ-law silence
-    ws.send(silentULawFrame);
-    console.log("📤 Sent fake μ-law audio frame");
-  }, 100);
-
-  // Stop after 10 seconds
-  setTimeout(() => {
-    clearInterval(interval);
-    ws.close();
-    console.log("🛑 Closed test client after 10s");
-  }, 10000);
+  // Load a test μ-law 8000Hz audio file
+  const filePath = path.resolve('./test_audio.ulaw');
+  try {
+    const audioBuffer = fs.readFileSync(filePath);
+    console.log(📤 Sending μ-law audio (${audioBuffer.length} bytes));
+    ws.send(audioBuffer);
+  } catch (err) {
+    console.error('❌ Failed to load test_audio.ulaw:', err.message);
+  }
 });
 
-ws.on("message", (data) => {
-  console.log("📥 Received audio from ElevenLabs (μ-law):", data.length, "bytes");
+ws.on('message', (data) => {
+  console.log('📥 Received audio response from ElevenLabs:', data.length, 'bytes');
+
+  // Optionally save received output to verify
+  const outputPath = path.resolve('./output_response.ulaw');
+  fs.appendFileSync(outputPath, data);
 });
 
-ws.on("close", () => {
-  console.log("❎ WebSocket connection closed");
+ws.on('close', () => {
+  console.log('❎ WebSocket connection closed');
 });
 
-ws.on("error", (err) => {
-  console.error("💥 WebSocket error:", err.message);
+ws.on('error', (err) => {
+  console.error('💥 WebSocket error:', err.message);
 });
